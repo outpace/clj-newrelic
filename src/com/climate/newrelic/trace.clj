@@ -4,29 +4,50 @@
   {'com.newrelic.api.agent.Trace {:metricName (str *ns* \. fname)
                                   :dispatcher true}})
 
-(defn- make-traced [tname fname arg-list body]
-  (let [i-args (for [_ arg-list] (gensym))
-        iname (gensym)]
-    `(do
-       (definterface ~iname (~'invoke [~@i-args]))
-       (deftype ~tname []
-         ~iname
-         (~(with-meta 'invoke (traced-meta fname)) [~'_ ~@i-args]
-           (let [~@(interleave arg-list i-args)]
-             ~@body))))))
+(defn ^:private not-ampersand?
+  "Returns true if the argument is not an ampersand symbol."
+  [x]
+  (not= x '&))
 
-(defn- is-varargs
-  "checks whether an args list uses varargs"
-  [arg-list]
-  (some #{'&} arg-list))
+(defn ^:private without-ampersands
+  "Filters out all ampersands from the vector.  Returns a vector."
+  [coll]
+  (filterv not-ampersand? coll))
 
-(defn- insert-amp [arg-list]
-  (concat (drop-last arg-list) ['& (last arg-list)]))
+(defn ^:private restructure-args
+  "Returns an argument list that removes all destructuring."
+  [args]
+  (mapv (fn [arg]
+          (cond
+            (map? arg) (gensym "map_arg_")
+            (vector? arg) (gensym "vector_arg_")
+            (symbol? arg) arg
+            :default (throw "Oh no!")))
+        args))
 
-(defn- remove-amp [arg-list]
-  (remove #{'&} arg-list))
+(defn ^:private process-destructuring
+  "Takes a raw list of arguments and returns a vector of two elements.  The
+  first element is a vector of arguments that eliminates all destructuring.
+  The second element is a sequence of the destructurings and their respective
+  restructured names.
 
-(defn- preproc-decl [fname fdecl]
+  For example, given the argument list [[a b] c & {:keys [foo]}], this function
+  will return something like:
+
+    [[vector_arg_062 c & map_arg_073]
+     [[a b] vector_arg_062 {:keys [foo]} map_arg_073]]"
+  [args]
+  (let [restructured-args (restructure-args args)
+        destructure-mappings (->> (map vector args restructured-args)
+                                  (filter (fn [[x y]] (not= x y)))
+                                  (apply concat))]
+    [restructured-args destructure-mappings]))
+
+(defn ^:private preproc-decl
+  "Processes the body of a function declaration, returning a vector that
+  contains the function metadata and a sequence of maps containing information
+  about function arguments and the function bodies."
+  [fname fdecl]
   ; mostly stolen from clojure.core/defn
   (let [; get docstring
         m (if (string? (first fdecl))
@@ -53,14 +74,13 @@
         fdecl (if (map? (last fdecl))
                 (butlast fdecl)
                 fdecl)
-        ; track what's var-args and what's not
-        ann-fdecl (for [[args & body] fdecl]
-                    (let [var-args (is-varargs args)]
-                      {:var-args var-args
-                       :args (if var-args (remove-amp args) args)
-                       :oname (gensym)
-                       :tname (gensym fname)
-                       :body body}))]
+        ann-fdecl (for [[raw-args & body] fdecl
+                        :let [[args arg-mappings] (process-destructuring raw-args)]]
+                    {:raw-args raw-args
+                     :args args
+                     :no-amp-args (without-ampersands args)
+                     :arg-mappings arg-mappings
+                     :body body})]
     [m ann-fdecl]))
 
 (defmacro defn-traced
@@ -75,16 +95,24 @@
   trace and show how much time was spent inside/outside the inner
   function."
   [fname & fdecl]
-  (let [[m ann-fdecl] (preproc-decl fname fdecl)]
+  (let [[m ann-fdecl] (preproc-decl fname fdecl)
+        tname (gensym (str fname "_Tracer_"))
+        iname (gensym (str fname "_TracerInterface_"))
+        oname (gensym (str fname "_tracer_instance_"))]
     `(do
        (def ~fname)
-       ~@(for [{:keys [args body tname]}  ann-fdecl]
-           (make-traced tname fname args body))
-       (let [~@(apply concat (for [{:keys [tname oname]} ann-fdecl]
-                               `(~oname (new ~tname))))]
-         (defn
-           ~fname ~m
-           ~@(for [{:keys [var-args args oname]} ann-fdecl]
-               (let [dumb-args (for [_ args] (gensym))]
-                 `([~@(if var-args (insert-amp dumb-args) dumb-args)]
-                   (.invoke ~oname ~@dumb-args)))))))))
+       (definterface ~iname
+         ~@(for [{:keys [no-amp-args]} ann-fdecl]
+           `(~'invoke [~@ no-amp-args])))
+       (deftype ~tname []
+         ~iname
+         ~@(for [{:keys [no-amp-args arg-mappings body]} ann-fdecl]
+             (if (seq arg-mappings)
+               `(~'invoke [~'_ ~@no-amp-args]
+                  (let [~@arg-mappings] ~@body))
+               `(~'invoke [~'_ ~@no-amp-args] ~@body))))
+       (let [~oname (new ~tname)]
+         (defn ~fname
+           ~m
+           ~@(for [{:keys [args no-amp-args]} ann-fdecl]
+               `(~args (.invoke ~oname ~@no-amp-args))))))))
