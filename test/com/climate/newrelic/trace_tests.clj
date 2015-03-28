@@ -39,6 +39,9 @@
    :blah blah})
 
 (deftest test-destructure
+  (testing "metadata"
+    (let [md (meta #'destructures)]
+      (is (= '([[foo bar] {:keys [baz qux]} & [blah]]) (:arglists md)))))
   (testing "functionality"
     (is (= (destructures [1 2] {:baz 3 :qux 4} 5)
            {:foo 1 :bar 2 :baz 3 :qux 4 :blah 5}))))

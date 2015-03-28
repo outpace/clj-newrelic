@@ -80,7 +80,8 @@
                      :args args
                      :no-amp-args (without-ampersands args)
                      :arg-mappings arg-mappings
-                     :body body})]
+                     :body body})
+        m (assoc m :arglists (list 'quote (map #(:raw-args %) ann-fdecl)))]
     [m ann-fdecl]))
 
 (defmacro defn-traced
