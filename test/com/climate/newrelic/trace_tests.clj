@@ -15,7 +15,9 @@
   (testing "metadata"
     (let [m (meta #'adds)]
       (is (= '([] [a] [a b] [a b c & ds]) (:arglists m)))
-      (is (= "adds some numbers" (:doc m)))))
+      (is (= "adds some numbers" (:doc m)))
+      (is (class? (::nr/interface m)))
+      (is (class? (::nr/type m)))))
   (testing "functionality"
     (is (= (adds) 0))
     (is (= (adds 1) 1))
@@ -41,7 +43,9 @@
 (deftest test-destructure
   (testing "metadata"
     (let [md (meta #'destructures)]
-      (is (= '([[foo bar] {:keys [baz qux]} & [blah]]) (:arglists md)))))
+      (is (= '([[foo bar] {:keys [baz qux]} & [blah]]) (:arglists md)))
+      (is (class? (::nr/interface md)))
+      (is (class? (::nr/type md)))))
   (testing "functionality"
     (is (= (destructures [1 2] {:baz 3 :qux 4} 5)
            {:foo 1 :bar 2 :baz 3 :qux 4 :blah 5}))))
@@ -51,5 +55,11 @@
   ([x] x))
 
 (deftest test-self-ref
-  (is (= (self-ref 7) 7))
-  (is (= (self-ref) 5)))
+  (testing "metadata"
+    (let [md (meta #'self-ref)]
+      (is (= '([] [x]) (:arglists md)))
+      (is (class? (::nr/interface md)))
+      (is (class? (::nr/type md)))))
+  (testing "functionality"
+    (is (= (self-ref 7) 7))
+    (is (= (self-ref) 5))))

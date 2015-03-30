@@ -114,6 +114,8 @@
                `(~'invoke [~'_ ~@no-amp-args] ~@body))))
        (let [~oname (new ~tname)]
          (defn ~fname
-           ~m
+           ~(assoc m
+                   ::interface iname
+                   ::type tname)
            ~@(for [{:keys [args no-amp-args]} ann-fdecl]
                `(~args (.invoke ~oname ~@no-amp-args))))))))
