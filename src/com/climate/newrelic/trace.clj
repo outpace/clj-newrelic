@@ -1,6 +1,7 @@
 (ns com.climate.newrelic.trace)
 
-(defn- traced-meta [fname]
+(defn ^:private make-trace-meta
+  [fname]
   {'com.newrelic.api.agent.Trace {:metricName (str *ns* \. fname)
                                   :dispatcher true}})
 
@@ -99,7 +100,8 @@
   (let [[m ann-fdecl] (preproc-decl fname fdecl)
         tname (gensym (str fname "_Tracer_"))
         iname (gensym (str fname "_TracerInterface_"))
-        oname (gensym (str fname "_tracer_instance_"))]
+        oname (gensym (str fname "_tracer_instance_"))
+        invoke (with-meta 'invoke (make-trace-meta fname))]
     `(do
        (def ~fname)
        (definterface ~iname
@@ -109,9 +111,9 @@
          ~iname
          ~@(for [{:keys [no-amp-args arg-mappings body]} ann-fdecl]
              (if (seq arg-mappings)
-               `(~'invoke [~'_ ~@no-amp-args]
+               `(~invoke [~'_ ~@no-amp-args]
                   (let [~@arg-mappings] ~@body))
-               `(~'invoke [~'_ ~@no-amp-args] ~@body))))
+               `(~invoke [~'_ ~@no-amp-args] ~@body))))
        (let [~oname (new ~tname)]
          (defn ~fname
            ~(assoc m
